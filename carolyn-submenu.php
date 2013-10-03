@@ -4,6 +4,10 @@ Plugin Name: Carolyn Submenu Select
 */
 
 
+// Plugin Options 
+require_once( dirname(__FILE__) . '/carolyn-submenu-options.php' );
+
+
 // Custom WordPress Meta Box
 // http://www.farinspace.com/how-to-create-custom-wordpress-meta-box/
 
@@ -47,20 +51,27 @@ function menu_meta_setup() {
 
 	$menus = get_terms( 'nav_menu', array( 'hide_empty' => true ) );
 
-	$output .= "<p><strong>Submenu:</strong></p>";
-	$output .= "<select name='_carolynmenu[sub]'>";
+	$options = get_option( 'carolyn_submenu_options' ); 
+	if ( $options['type'] != 'woo' ) :
 
-	$output .= '<option value="none">(none)</option>';
+		$output .= "<p><strong>Submenu:</strong></p>";
+		$output .= "<select name='_carolynmenu[sub]'>";
 
-	foreach ( $menus as $menu ):
+		$output .= '<option value="none">(none)</option>';
 
-		$output .= '<option value="' . $menu->name . '"';
-		if( $meta['sub'] == $menu->name ) $output .= ' selected="selected"';
-		$output .= '>' . $menu->name . '</option>';
+		foreach ( $menus as $menu ):
+
+			$output .= '<option value="' . $menu->name . '"';
+			if( $meta['sub'] == $menu->name ) $output .= ' selected="selected"';
+			$output .= '>' . $menu->name . '</option>';
 		
-	endforeach;
+		endforeach;
 
-	$output .= "</select>";	
+		$output .= "</select>";	
+	
+	endif;
+
+
 	$output .= "<p><strong>Navigation Highlight:</strong></p>";
 	$output .= "<select name='_carolynmenu[highlight]'>";
 	$output .= '<option value="none">(none)</option>';
@@ -156,7 +167,28 @@ function menu_meta_clean(&$arr) {
 }
 
 
+function the_carolyn_menu($location='below') {
+	global $post;
+	$options = get_option( 'carolyn_submenu_options' ); 
 
+	if ( $location == 'above' && $options['placement'] == 'above' ):
+		$doit = true;
+	elseif ( $location != 'above' && $options['placement'] != 'above' ):
+		$doit = true;
+	else:
+		$doit = false;
+	endif;
+
+	if ( $doit ) :
+		if ( $options['type'] == 'woo' ) :
+			dynamic_sidebar( 'woosidebars' );
+		else :
+			carolyn_get_menu($post->ID,'subnav');
+		endif; 
+	endif;
+
+
+}
 
 function carolyn_get_menu($post_id, $class='') {
 	
@@ -180,8 +212,6 @@ function carolyn_get_menu($post_id, $class='') {
 }
 
 
-add_filter('nav_menu_css_class' , 'special_nav_class' , 10, 2 );
-
 function special_nav_class($classes, $item ) {
 
 	global $post;
@@ -190,11 +220,20 @@ function special_nav_class($classes, $item ) {
 
 	$thetitle = $the_menu['highlight'];
 
-	if ( $item->title == $thetitle ) $classes[] = "current_page_ancestor";
+	if ( $item->title == $thetitle ) :
+//		print_r($item);
+		$classes[] = "current_page_ancestor";
+
+		if ( $item->menu_item_parent != 0 ) :
+			echo 'parent: ' . $item->menu_item_parent;
+		endif;
+
+	endif;
 
 	return $classes;
 
 }
+// add_filter('nav_menu_css_class' , 'special_nav_class' , 10, 2 );
 
 
 /**
@@ -227,10 +266,120 @@ function be_hide_editor() {
 	}
 
 }
-
 add_action( 'admin_enqueue_scripts', 'be_hide_editor' );
 
+function this_items_menu($item_id) {
+
+	$navmenus = get_terms( 'nav_menu' );
+
+	foreach ( $navmenus as $navmenu ) :
+
+		$navitems = wp_get_nav_menu_items( $navmenu->term_id );
+
+			foreach ( $navitems as $navitem ) :
+
+				if ( $navitem->ID == $item_id ) :
+					return $navmenu->term_id;
+				endif;
+
+		endforeach;
+	
+	endforeach;
+	
+	
+}
 
 
+function this_posts_genealogy($thishighlight, $item) {
+
+	$theitems = array();
+	
+	$this_items_menu = this_items_menu($item->ID);
+	$navitems = wp_get_nav_menu_items( $this_items_menu );
+	
+	foreach ( $navitems as $navitem ) :
+	
+	 		if ( $navitem->title == $thishighlight ) {	
+			$theitems[] = get_parent_menu_name($navitem);
+		}
+	
+	
+	endforeach;
+
+	wp_reset_postdata();
+
+	
+	// To be honest I'm fuzzy on why they're repeating in here. Anyhow, remove duplicates...
+	$theitems = array_unique($theitems);
+	
+	if ( count($theitems) > 0 ) :
+	
+		return $theitems;
+	
+	endif;
+
+} 
+
+
+function get_parent_menu_name($theitem) {
+
+//	$theitems = array();
+
+	$parentid = $theitem->menu_item_parent;
+	
+	if ( $parentid != 0 ) :
+
+		$my_query = new WP_Query(array('p'=>$parentid, 'post_type'=>'nav_menu_item'));
+
+		while ( $my_query->have_posts() ) : $my_query->the_post();
+
+			return get_the_title();
+
+		endwhile;
+		
+//		wp_reset_postdata();
+		
+	endif;
+
+
+	
+}
+
+
+
+function highlight_nav( $classes, $item ) {
+
+	global $post;
+
+	$the_meta = get_post_meta( $post->ID,'_carolynmenu', TRUE );
+	
+	$thishighlight = $the_meta['highlight'];
+		
+	$theitems = array();
+	
+	if ( $thishighlight ) $theitems[] = $thishighlight;
+		
+	$thegenealogy = this_posts_genealogy($thishighlight, $item);
+	
+	if (is_array($thegenealogy)) :
+	
+		$thecombineditems = array_merge($theitems, $thegenealogy);
+	
+	else :
+		$thecombineditems = $theitems;
+	endif;
+	
+	
+	foreach ( $thecombineditems as $theitem ) :
+		 
+		if ( $item->title == $theitem ) $classes[] = "current-menu-ancestor";
+
+	endforeach;
+	
+	return $classes;
+
+}
+
+add_filter('nav_menu_css_class' , 'highlight_nav' , 10, 2 );
 
 ?>
